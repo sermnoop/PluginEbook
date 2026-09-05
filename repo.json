@@ -1,15 +1,15 @@
 {
   "type": "ebook",
-  "name": "My eBook Sources",
+  "name": "My eBook Repo",
   "plugins": [
     {
-      "id": "standardebooks-source",
-      "name": "Standard Ebooks",
+      "id": "kolnovel-source",
+      "name": "KolNovel",
       "version": "1.0.0",
-      "lang": "en",
+      "lang": "ar",
       "nsfw": false,
-      "icon": "https://standardebooks.org/favicon.ico",
-      "entry": "standardebooks.plugin.js"
+      "icon": "https://kolnovel.com/favicon.ico",
+      "entry": "kolnovel.plugin.js"
     }
   ]
 }
