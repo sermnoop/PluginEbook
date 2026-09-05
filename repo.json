@@ -1,6 +1,6 @@
 {
   "type": "ebook",
-  "name": "My Novel Repo",
+  "name": "My eBook Repo",
   "plugins": [
     {
       "id": "kolnovel-source",
