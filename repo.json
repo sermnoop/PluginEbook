@@ -10,15 +10,6 @@
       "nsfw": false,
       "icon": "https://kolnovel.com/favicon.ico",
       "entry": "kolnovel.plugin.js"
-    },
-    {
-      "id": "rewayatclub-source",
-      "name": "Rewayat Club",
-      "version": "1.6.0",
-      "lang": "ar",
-      "nsfw": false,
-      "icon": "https://rewayat.club/favicon.ico",
-      "entry": "rewayatclub.plugin.js"
     }
   ]
 }
