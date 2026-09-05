@@ -2,7 +2,11 @@
 const BASE = "https://kolnovel.com";
 
 async function getDoc(path) {
-  const targetUrl = path.startsWith("http") ? path : (BASE + (path.startsWith("/") ? path : "/" + path));
+  let targetUrl = path;
+  if (!targetUrl.startsWith("http")) {
+    targetUrl = BASE + (path.startsWith("/") ? path : "/" + path);
+  }
+  
   const res = await harbor.http(targetUrl, {
     responseType: "text",
     headers: {
@@ -10,7 +14,7 @@ async function getDoc(path) {
       "Referer": BASE + "/"
     }
   });
-  if (!res.ok) throw new Error("http " + res.status + " for " + path);
+  if (!res.ok) throw new Error("http " + res.status + " for " + targetUrl);
   return harbor.parseHtml(res.body);
 }
 
@@ -24,30 +28,29 @@ function abs(url) {
 
 function cleanTitle(value) {
   return (value || "")
-    .replace(/[^\p{L}\p{N}'’\s]+/gu, " ")
     .replace(/\s+(?:kol|كول|رواية)$/iu, "")
     .replace(/\s+/g, " ")
     .trim();
 }
 
 function cardToSummary(el) {
-  const link = el.querySelector("a[href*='/series/'], a");
+  const link = el.querySelector(".bsx a, a");
   if (!link) return null;
 
   const href = link.attr("href") || "";
-  const match = href.match(/\/series\/([^\/]+)\/?/);
+  // استخراج المعرف سواء كان يحتوي على series أو في الجذر
+  const match = href.match(/\/series\/([^\/]+)\/?/) || href.match(/kolnovel\.com\/([^\/]+)\/?/);
   if (!match) return null;
 
+  const id = match[1];
   const img = el.querySelector("img");
-  const rawTitle = link.attr("title") || el.querySelector(".tt, .title")?.text() || link.text() || match[1];
-
-  let cover = img?.attr("data-src") || img?.attr("data-lazy-src") || img?.attr("src");
+  const rawTitle = link.attr("title") || el.querySelector(".tt, .title")?.text() || link.text() || id;
+  const cover = img?.attr("data-src") || img?.attr("data-lazy-src") || img?.attr("src");
 
   return {
-    id: match[1],
+    id: id,
     title: cleanTitle(rawTitle),
-    cover: abs(cover),
-    status: el.querySelector(".status, .epx")?.text()?.trim() || undefined
+    cover: abs(cover)
   };
 }
 
@@ -57,73 +60,79 @@ const plugin = {
 
   async popular(offset) {
     const page = Math.floor(offset / 20) + 1;
-    const path = page === 1 ? "/series/?order=popular" : `/series/?page=${page}&order=popular`;
+    const path = page === 1 ? "/series/?order=update" : `/series/?page=${page}&order=update`;
     const doc = await getDoc(path);
-    
-    // فحص جميع الحاويات الممكنة في قالب KolNovel
-    const items = doc.querySelectorAll(".listupd .bsx, .listupd article, .bsx");
-    return items.map(cardToSummary).filter(Boolean);
+    return doc.querySelectorAll(".listupd article.bs, .listupd .bsx, article.bs").map(cardToSummary).filter(Boolean);
   },
 
   async search(query, offset) {
     const page = Math.floor(offset / 20) + 1;
     const path = page === 1 ? `/?s=${encodeURIComponent(query)}` : `/page/${page}/?s=${encodeURIComponent(query)}`;
     const doc = await getDoc(path);
-    
-    const items = doc.querySelectorAll(".listupd .bsx, .listupd article, .c-tabs-item__content, .bsx");
-    return items.map(cardToSummary).filter(Boolean);
+    return doc.querySelectorAll(".listupd article.bs, .listupd .bsx, .search-item").map(cardToSummary).filter(Boolean);
   },
 
   async detail(id) {
     const doc = await getDoc(`/series/${id}/`);
-    const root = doc.querySelector(".series-profile, .post-body, .main-info, article");
-    if (!root) return null;
-
-    const title = root.querySelector("h1.entry-title, h1")?.text() || id;
-    const img = root.querySelector(".thumb img, .series-thumb img, img.wp-post-image");
-    const desc = root.querySelector(".entry-content, .series-synops, .summary")?.text()?.trim();
-    const author = root.querySelector(".author, .spe span")?.text()?.replace(/المؤلف\s*:/i, "")?.trim();
-    const status = root.querySelector(".status")?.text()?.trim();
+    const title = doc.querySelector("h1.entry-title, h1")?.text() || decodeURIComponent(id);
+    const img = doc.querySelector(".thumb img, .series-thumb img");
+    const desc = doc.querySelector(".entry-content, .series-synops, .summary")?.text()?.trim();
+    const author = doc.querySelector(".author, .spe span")?.text()?.replace(/المؤلف\s*:/i, "")?.trim();
 
     return {
       id,
       title: cleanTitle(title),
       cover: abs(img?.attr("data-src") || img?.attr("src")),
       description: desc || "",
-      author: author || undefined,
-      status: status || undefined,
-      genres: root.querySelectorAll(".genres a, .series-genres a").map(node => node.text().trim()).filter(Boolean)
+      author: author || undefined
     };
   },
 
   async chapters(id) {
     const doc = await getDoc(`/series/${id}/`);
-    const nodes = doc.querySelectorAll(".eplister ul li a, ul.chapter-list li a, .cl_list ul li a");
-    const total = nodes.length;
+    const links = doc.querySelectorAll(".eplister ul li a, ul.chapter-list li a");
+    const total = links.length;
 
-    const list = new Array(total);
-    for (let i = 0; i < total; i++) {
-      const a = nodes[i];
+    const list = [];
+    for (let i = total - 1; i >= 0; i--) {
+      const a = links[i];
       const href = a.attr("href") || "";
+      if (!href) continue;
+
       const numNode = a.querySelector(".epl-num, .chapternum, .name");
       const title = numNode ? numNode.text().trim() : a.text().trim();
 
-      const position = total - 1 - i;
-      list[position] = {
-        id: href.replace(BASE, "").replace(/^\//, ""),
-        position: position,
+      // نحفظ مسار الرابط كاملاً في الـ id لضمان طلبه بدقة في content()
+      const cleanPath = href.replace(/^https?:\/\/[^\/]+\//, "");
+
+      list.push({
+        id: cleanPath,
+        position: list.length,
         title: title,
         pages: 0,
         language: "ar"
-      };
+      });
     }
 
-    return list.filter(Boolean);
+    return list;
   },
 
   async content(chapterId) {
+    // chapterId الآن يحمل المسار الدقيق مثل shaag24%d9%84%d9%88%d8%b1%d8%af...
     const doc = await getDoc("/" + chapterId);
-    const blocks = doc.querySelectorAll(".entry-content p, .epcontent p");
-    return blocks.map(n => n.text().trim()).filter(t => t && !t.includes("kolnovel")).join("\n\n");
+
+    // استخراج فقرات الفصل بدقة من حاوية القراءة الخاصة بـ KolNovel
+    const paragraphs = doc.querySelectorAll(".epcontent p, .entry-content p");
+    const lines = [];
+
+    for (let i = 0; i < paragraphs.length; i++) {
+      const text = paragraphs[i].text().trim();
+      if (!text) continue;
+      // استبعاد نصوص الإعلانات وتنبيهات الموقع
+      if (text.includes("kolnovel") || text.includes("انضموا إلى سيرفرنا") || text.includes("discord.gg")) continue;
+      lines.push(text);
+    }
+
+    return lines.join("\n\n");
   }
 };
