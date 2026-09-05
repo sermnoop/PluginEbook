@@ -1,0 +1,15 @@
+{
+  "type": "ebook",
+  "name": "My Novel Repo",
+  "plugins": [
+    {
+      "id": "kolnovel-source",
+      "name": "KolNovel",
+      "version": "1.0.0",
+      "lang": "ar",
+      "nsfw": false,
+      "icon": "https://kolnovel.com/favicon.ico",
+      "entry": "kolnovel.plugin.js"
+    }
+  ]
+}
