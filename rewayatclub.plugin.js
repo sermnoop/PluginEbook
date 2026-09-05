@@ -1,187 +1,206 @@
-// Harbor eBook source plugin for Rewayat Club
-const BASE = "https://rewayat.club";
+(() => {
+  const BASE = "https://rewayat.club";
 
-function cleanHtml(html) {
-  if (!html || typeof html !== "string") return "";
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/<style[\s\S]*?<\/style>/gi, "")
-    .replace(/<svg[\s\S]*?<\/svg>/gi, "");
-}
+  function cleanHtml(html) {
+    if (!html || typeof html !== "string") return "";
+    return html
+      .replace(/<script[\s\S]*?<\/script>/gi, "")
+      .replace(/<style[\s\S]*?<\/style>/gi, "")
+      .replace(/<svg[\s\S]*?<\/svg>/gi, "");
+  }
 
-function safeUrl(path) {
-  if (!path) return BASE;
-  let full = path.startsWith("http") ? path : (BASE + (path.startsWith("/") ? path : "/" + path));
-  try { full = decodeURI(full); } catch (e) {}
-  return encodeURI(full);
-}
+  function safeUrl(path) {
+    if (!path) return BASE;
+    let full = path.startsWith("http") ? path : (BASE + (path.startsWith("/") ? path : "/" + path));
+    try { full = decodeURI(full); } catch (e) {}
+    return encodeURI(full);
+  }
 
-async function getDoc(path) {
-  const targetUrl = safeUrl(path);
-  const res = await harbor.http(targetUrl, {
-    responseType: "text",
-    headers: {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-      "Referer": BASE + "/"
-    }
-  });
-  if (!res.ok) throw new Error("http " + res.status + " for " + targetUrl);
-  return harbor.parseHtml(cleanHtml(res.body));
-}
+  async function getDoc(path) {
+    const targetUrl = safeUrl(path);
+    const res = await harbor.http(targetUrl, {
+      responseType: "text",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "ar,en;q=0.9",
+        "Referer": BASE + "/"
+      }
+    });
+    if (!res.ok) throw new Error("http " + res.status + " for " + targetUrl);
+    return harbor.parseHtml(cleanHtml(res.body));
+  }
 
-function abs(url) {
-  if (!url) return undefined;
-  if (/^https?:\/\//i.test(url)) return url;
-  if (url.startsWith("//")) return "https:" + url;
-  if (url.startsWith("/")) return BASE + url;
-  return BASE + "/" + url;
-}
+  function abs(url) {
+    if (!url) return undefined;
+    if (/^https?:\/\//i.test(url)) return url;
+    if (url.startsWith("//")) return "https:" + url;
+    if (url.startsWith("/")) return BASE + url;
+    return BASE + "/" + url;
+  }
 
-function cardToSummary(el) {
-  const link = el.querySelector("h2 a, h3 a, h4 a, .entry-title a, .post-title a, a");
-  if (!link) return null;
+  function cleanTitle(value) {
+    return (value || "")
+      .replace(/\s+(?:رواية|rewayat|club)$/iu, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
 
-  const href = link.attr("href") || "";
-  if (!href || href === "#" || href === BASE || href === BASE + "/") return null;
-  if (/\/(category|tag|author|page|contact|about|privacy)\//i.test(href)) return null;
+  const plugin = {
+    id: "rewayatclub-source",
+    name: "Rewayat Club",
 
-  const cleanPath = href.replace(/^https?:\/\/[^\/]+\//, "").replace(/\/$/, "");
-  const segments = cleanPath.split("/").filter(Boolean);
-  if (segments.length === 0) return null;
-
-  const slug = segments[segments.length - 1];
-  if (!slug || slug.startsWith("wp-")) return null;
-
-  const img = el.querySelector("img");
-  const cover = img?.attr("data-src") || img?.attr("data-lazy-src") || img?.attr("src");
-
-  let rawTitle = link.attr("title") || el.querySelector("h2, h3, h4, .entry-title")?.text() || link.text() || slug;
-  try { rawTitle = decodeURIComponent(rawTitle); } catch (e) {}
-
-  return {
-    id: slug,
-    title: rawTitle.replace(/\s+(?:رواية|rewayat|club)$/iu, "").trim(),
-    cover: abs(cover)
-  };
-}
-
-const plugin = {
-  id: "rewayatclub-source",
-  name: "Rewayat Club",
-
-  async popular(offset) {
-    try {
+    async popular(offset) {
       const page = Math.floor(offset / 20) + 1;
-      const path = page === 1 ? "/" : `/page/${page}/`;
+      const path = page === 1 ? "/library" : `/library?page=${page}`;
       const doc = await getDoc(path);
-      const items = doc.querySelectorAll("article, .post, .listupd .bsx, .entry");
-      const seen = new Set();
-      const results = [];
 
-      for (let i = 0; i < items.length; i++) {
-        const card = cardToSummary(items[i]);
-        if (card && !seen.has(card.id)) {
-          seen.add(card.id);
-          results.push(card);
+      // التقاط جميع روابط الروايات مباشرة من شجرة عناصر Nuxt
+      const links = doc.querySelectorAll("a[href*='/novel/']");
+      const novels = new Map();
+
+      for (let i = 0; i < links.length; i++) {
+        const a = links[i];
+        const href = a.attr("href") || "";
+        const match = href.match(/\/novel\/([^\/\?#]+)/);
+        if (!match) continue;
+
+        const slug = match[1];
+        if (!slug || ["library", "page", "search", "user", "login", "register"].includes(slug)) continue;
+
+        const current = novels.get(slug) || { id: slug, title: "", cover: undefined };
+
+        const text = (a.attr("title") || a.text() || "").replace(/\s+/g, " ").trim();
+        if (text && (!current.title || current.title === slug)) {
+          current.title = cleanTitle(text);
+        }
+
+        const img = a.querySelector("img") || a.parent?.querySelector("img");
+        const coverUrl = img?.attr("src") || img?.attr("data-src") || img?.attr("data-lazy-src");
+        if (coverUrl && !current.cover) {
+          current.cover = abs(coverUrl);
+        }
+
+        novels.set(slug, current);
+      }
+
+      return Array.from(novels.values()).map(n => {
+        if (!n.title) {
+          try { n.title = decodeURIComponent(n.id); } catch (e) { n.title = n.id; }
+        }
+        return n;
+      });
+    },
+
+    async search(query, offset) {
+      const page = Math.floor(offset / 20) + 1;
+      const path = `/library?search=${encodeURIComponent(query)}&page=${page}`;
+      const doc = await getDoc(path);
+
+      const links = doc.querySelectorAll("a[href*='/novel/']");
+      const novels = new Map();
+
+      for (let i = 0; i < links.length; i++) {
+        const a = links[i];
+        const href = a.attr("href") || "";
+        const match = href.match(/\/novel\/([^\/\?#]+)/);
+        if (!match) continue;
+
+        const slug = match[1];
+        if (!slug || ["library", "page", "search"].includes(slug)) continue;
+
+        const current = novels.get(slug) || { id: slug, title: "", cover: undefined };
+        const text = (a.attr("title") || a.text() || "").replace(/\s+/g, " ").trim();
+        if (text && (!current.title || current.title === slug)) {
+          current.title = cleanTitle(text);
+        }
+
+        const img = a.querySelector("img") || a.parent?.querySelector("img");
+        const coverUrl = img?.attr("src") || img?.attr("data-src") || img?.attr("data-lazy-src");
+        if (coverUrl && !current.cover) {
+          current.cover = abs(coverUrl);
+        }
+
+        novels.set(slug, current);
+      }
+
+      return Array.from(novels.values()).map(n => {
+        if (!n.title) {
+          try { n.title = decodeURIComponent(n.id); } catch (e) { n.title = n.id; }
+        }
+        return n;
+      });
+    },
+
+    async detail(id) {
+      const doc = await getDoc(`/novel/${id}`);
+      let title = doc.querySelector("h1")?.text() || id;
+      try { title = decodeURIComponent(title); } catch (e) {}
+
+      const img = doc.querySelector("img[src*='cover'], img[src*='novel'], img");
+      const desc = doc.querySelector("p, .description, .summary")?.text()?.trim();
+
+      return {
+        id,
+        title: cleanTitle(title),
+        cover: abs(img?.attr("src") || img?.attr("data-src")),
+        description: desc || "",
+        author: undefined
+      };
+    },
+
+    async chapters(id) {
+      const doc = await getDoc(`/novel/${id}`);
+      // روابط الفصول تتبع صيغة /novel/{id}/{chapterNum}
+      const links = doc.querySelectorAll(`a[href*='/novel/${id}/']`);
+      const chaptersMap = new Map();
+
+      for (let i = 0; i < links.length; i++) {
+        const a = links[i];
+        const href = a.attr("href") || "";
+        const match = href.match(new RegExp(`/novel/${id}/([^\\/\\?#]+)`));
+        if (!match) continue;
+
+        const chNum = match[1];
+        if (!chaptersMap.has(chNum)) {
+          const rawTitle = a.text().replace(/\s+/g, " ").trim();
+          chaptersMap.set(chNum, {
+            id: href.replace(/^https?:\/\/[^\/]+/, "").replace(/^\//, ""),
+            title: rawTitle || `فصل ${chNum}`,
+            chNum: parseFloat(chNum) || i
+          });
         }
       }
-      return results;
-    } catch (e) {
-      return [];
-    }
-  },
 
-  async search(query, offset) {
-    try {
-      const page = Math.floor(offset / 20) + 1;
-      const path = page === 1 ? `/?s=${encodeURIComponent(query)}` : `/page/${page}/?s=${encodeURIComponent(query)}`;
-      const doc = await getDoc(path);
-      const items = doc.querySelectorAll("article, .post, .listupd .bsx, .search-item");
-      const seen = new Set();
-      const results = [];
+      // ترتيب الفصول تصاعدياً
+      const sorted = Array.from(chaptersMap.values()).sort((a, b) => a.chNum - b.chNum);
 
-      for (let i = 0; i < items.length; i++) {
-        const card = cardToSummary(items[i]);
-        if (card && !seen.has(card.id)) {
-          seen.add(card.id);
-          results.push(card);
-        }
-      }
-      return results;
-    } catch (e) {
-      return [];
-    }
-  },
-
-  async detail(id) {
-    let doc;
-    for (const p of [`/${id}/`, `/novel/${id}/`, `/series/${id}/`]) {
-      try { doc = await getDoc(p); if (doc) break; } catch (e) {}
-    }
-    if (!doc) throw new Error("Detail failed for " + id);
-
-    let title = doc.querySelector("h1.entry-title, h1")?.text() || id;
-    try { title = decodeURIComponent(title); } catch (e) {}
-
-    const img = doc.querySelector(".thumb img, .series-thumb img, img.wp-post-image");
-    const desc = doc.querySelector(".entry-content, .series-synops, .summary")?.text()?.trim();
-    const author = doc.querySelector(".author, .spe span")?.text()?.replace(/المؤلف\s*:/i, "")?.trim();
-
-    return {
-      id,
-      title: title.replace(/\s+(?:رواية|rewayat|club)$/iu, "").trim(),
-      cover: abs(img?.attr("data-src") || img?.attr("src")),
-      description: desc || "",
-      author: author || undefined
-    };
-  },
-
-  async chapters(id) {
-    let doc;
-    for (const p of [`/${id}/`, `/novel/${id}/`, `/series/${id}/`]) {
-      try { doc = await getDoc(p); if (doc) break; } catch (e) {}
-    }
-    if (!doc) return [];
-
-    const links = doc.querySelectorAll(".eplister ul li a, .wp-manga-chapter a, ul.chapter-list li a, .cl_list li a");
-    const total = links.length;
-    if (total === 0) return [];
-
-    const list = new Array(total);
-    for (let i = 0; i < total; i++) {
-      const a = links[i];
-      const href = a.attr("href") || "";
-      const numNode = a.querySelector(".epl-num, .chapternum");
-      const titleNode = a.querySelector(".epl-title");
-
-      let chapterTitle = numNode ? `فصل ${numNode.text().trim()}` : a.text().trim();
-      if (numNode && titleNode) chapterTitle += ` - ${titleNode.text().trim()}`;
-
-      const position = total - 1 - i;
-      list[position] = {
-        id: href.replace(/^https?:\/\/[^\/]+/, ""),
-        position: position,
-        title: chapterTitle.replace(/\s+/g, " ").trim() || `فصل ${position + 1}`,
+      return sorted.map((ch, index) => ({
+        id: ch.id,
+        position: index,
+        title: ch.title,
         pages: 0,
         language: "ar"
-      };
-    }
-    return list.filter(Boolean);
-  },
+      }));
+    },
 
-  async content(chapterId) {
-    const doc = await getDoc(chapterId.startsWith("/") ? chapterId : "/" + chapterId);
-    const container = doc.querySelector(".epcontent, .reading-content, #readerarea, .entry-content, .post-content");
-    if (!container) return "";
+    async content(chapterId) {
+      const doc = await getDoc("/" + chapterId);
+      const paragraphs = doc.querySelectorAll("p");
+      const lines = [];
 
-    const paragraphs = container.querySelectorAll("p");
-    const lines = [];
-    for (let i = 0; i < paragraphs.length; i++) {
-      const text = paragraphs[i].text().trim();
-      if (text && !/rewayat\.club|ديسكورد|سيرفرنا|انضم/i.test(text)) {
+      for (let i = 0; i < paragraphs.length; i++) {
+        const text = paragraphs[i].text().trim();
+        if (!text) continue;
+        if (/rewayat\.club|ديسكورد|سيرفرنا|انضم|telegram|discord/i.test(text)) continue;
         lines.push(text);
       }
+
+      return lines.join("\n\n");
     }
-    return lines.length > 0 ? lines.join("\n\n") : container.text().trim();
+  };
+
+  if (typeof harbor !== "undefined" && harbor.register) {
+    harbor.register(plugin);
   }
-};
+})();
