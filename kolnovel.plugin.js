@@ -1,6 +1,4 @@
 // Harbor eBook source plugin for KolNovel
-// Website: https://kolnovel.com
-
 const BASE = "https://kolnovel.com";
 
 async function getDoc(path) {
@@ -26,29 +24,30 @@ function abs(url) {
 
 function cleanTitle(value) {
   return (value || "")
-    .replace(/[^\p{L}\p{N}'’]+/gu, " ")
+    .replace(/[^\p{L}\p{N}'’\s]+/gu, " ")
     .replace(/\s+(?:kol|كول|رواية)$/iu, "")
     .replace(/\s+/g, " ")
     .trim();
 }
 
 function cardToSummary(el) {
-  const link = el.querySelector(".bsx a, a.tip, .series-title a, a");
-  const img = el.querySelector("img");
+  const link = el.querySelector("a[href*='/series/'], a");
   if (!link) return null;
 
-  const rawTitle = (link.attr("title") || el.querySelector(".tt, .title")?.text() || link.text() || "").trim();
   const href = link.attr("href") || "";
-  
-  const match = href.match(/\/series\/([^\/]+)\/?/) || href.match(/\/([^\/]+)\/?$/);
+  const match = href.match(/\/series\/([^\/]+)\/?/);
   if (!match) return null;
+
+  const img = el.querySelector("img");
+  const rawTitle = link.attr("title") || el.querySelector(".tt, .title")?.text() || link.text() || match[1];
+
+  let cover = img?.attr("data-src") || img?.attr("data-lazy-src") || img?.attr("src");
 
   return {
     id: match[1],
     title: cleanTitle(rawTitle),
-    cover: abs(img?.attr("data-src") || img?.attr("data-lazy-src") || img?.attr("src")),
-    status: el.querySelector(".status, .epx")?.text()?.trim() || undefined,
-    genres: el.querySelectorAll(".genres a").map(n => n.text().trim()).filter(Boolean)
+    cover: abs(cover),
+    status: el.querySelector(".status, .epx")?.text()?.trim() || undefined
   };
 }
 
@@ -56,27 +55,32 @@ const plugin = {
   id: "kolnovel-source",
   name: "KolNovel",
 
-  async popular(offset, tagId) {
+  async popular(offset) {
     const page = Math.floor(offset / 20) + 1;
-    const path = page === 1 ? "/series/" : "/series/?page=" + page;
+    const path = page === 1 ? "/series/?order=popular" : `/series/?page=${page}&order=popular`;
     const doc = await getDoc(path);
-    return doc.querySelectorAll(".listupd article.bs, .listupd .bsx, .bs").map(cardToSummary).filter(Boolean);
+    
+    // فحص جميع الحاويات الممكنة في قالب KolNovel
+    const items = doc.querySelectorAll(".listupd .bsx, .listupd article, .bsx");
+    return items.map(cardToSummary).filter(Boolean);
   },
 
-  async search(query, offset, tagId) {
+  async search(query, offset) {
     const page = Math.floor(offset / 20) + 1;
-    const path = page === 1 ? "/?s=" + encodeURIComponent(query) : "/page/" + page + "/?s=" + encodeURIComponent(query);
+    const path = page === 1 ? `/?s=${encodeURIComponent(query)}` : `/page/${page}/?s=${encodeURIComponent(query)}`;
     const doc = await getDoc(path);
-    return doc.querySelectorAll(".listupd article.bs, .listupd .bsx, .search-item").map(cardToSummary).filter(Boolean);
+    
+    const items = doc.querySelectorAll(".listupd .bsx, .listupd article, .c-tabs-item__content, .bsx");
+    return items.map(cardToSummary).filter(Boolean);
   },
 
   async detail(id) {
-    const doc = await getDoc("/series/" + id + "/");
+    const doc = await getDoc(`/series/${id}/`);
     const root = doc.querySelector(".series-profile, .post-body, .main-info, article");
     if (!root) return null;
 
     const title = root.querySelector("h1.entry-title, h1")?.text() || id;
-    const img = root.querySelector(".thumb img, .series-thumb img");
+    const img = root.querySelector(".thumb img, .series-thumb img, img.wp-post-image");
     const desc = root.querySelector(".entry-content, .series-synops, .summary")?.text()?.trim();
     const author = root.querySelector(".author, .spe span")?.text()?.replace(/المؤلف\s*:/i, "")?.trim();
     const status = root.querySelector(".status")?.text()?.trim();
@@ -93,8 +97,8 @@ const plugin = {
   },
 
   async chapters(id) {
-    const doc = await getDoc("/series/" + id + "/");
-    const nodes = doc.querySelectorAll(".eplister ul li a, ul.chapter-list li a");
+    const doc = await getDoc(`/series/${id}/`);
+    const nodes = doc.querySelectorAll(".eplister ul li a, ul.chapter-list li a, .cl_list ul li a");
     const total = nodes.length;
 
     const list = new Array(total);
