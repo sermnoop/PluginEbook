@@ -1,1 +1,15 @@
-﻿{\`n  "type": "ebook",\`n  "name": "My Novel Sources",\`n  "plugins": [\`n    {\`n      "id": "kolnovel-source",\`n      "name": "KolNovel",\`n      "version": "1.2.0",\`n      "lang": "ar",\`n      "nsfw": false,\`n      "icon": "https://kolnovel.com/favicon.ico",\`n      "entry": "kolnovel.plugin.js"\`n    }\`n  ]\`n}
+﻿{
+  "type": "ebook",
+  "name": "My Novel Sources",
+  "plugins": [
+    {
+      "id": "kolnovel-source",
+      "name": "KolNovel",
+      "version": "1.2.0",
+      "lang": "ar",
+      "nsfw": false,
+      "icon": "https://kolnovel.com/favicon.ico",
+      "entry": "kolnovel.plugin.js"
+    }
+  ]
+}
