@@ -50,18 +50,30 @@ function cleanTitle(value) {
 }
 
 function cardToSummary(el) {
-  const link = el.querySelector("a");
+  // استهداف رابط العنوان مباشرة وتجنب روابط التصنيفات والوسوم
+  const link = el.querySelector("h2 a, h3 a, h4 a, .entry-title a, .post-title a, .title a, a:has(img)");
   if (!link) return null;
 
   const href = link.attr("href") || "";
-  const match = href.match(/\/(?:novel|series|rewayat)\/([^\/]+)/) || href.match(/rewayat\.club\/([^\/]+)\/?$/);
-  if (!match) return null;
+  if (!href || href === "#" || href === BASE || href === BASE + "/") return null;
 
-  const slug = match[1];
+  // استبعاد الصفحات الثابتة والتصنيفات
+  if (/\/(category|tag|author|page|contact|about|privacy|terms)\//i.test(href)) {
+    return null;
+  }
+
+  // استخراج المعرّف
+  const cleanPath = href.replace(/^https?:\/\/[^\/]+\//, "").replace(/\/$/, "");
+  const segments = cleanPath.split("/").filter(Boolean);
+  if (segments.length === 0) return null;
+
+  const slug = segments[segments.length - 1];
+  if (!slug || slug.startsWith("wp-")) return null;
+
   const img = el.querySelector("img");
   const cover = img?.attr("data-src") || img?.attr("data-lazy-src") || img?.attr("src");
 
-  let rawTitle = link.attr("title") || el.querySelector(".title, .tt, h2, h3, h4")?.text() || link.text() || slug;
+  let rawTitle = link.attr("title") || el.querySelector("h2, h3, h4, .entry-title, .title")?.text() || link.text() || slug;
   try {
     rawTitle = decodeURIComponent(rawTitle);
   } catch (e) {}
@@ -83,16 +95,16 @@ async function getNovelDoc(id) {
     return cachedDoc;
   }
 
-  let doc;
-  try {
-    doc = await getDoc(`/novel/${id}/`);
-  } catch (e) {
+  let doc = null;
+  const candidates = [`/${id}/`, `/novel/${id}/`, `/series/${id}/`];
+  for (const path of candidates) {
     try {
-      doc = await getDoc(`/series/${id}/`);
-    } catch (err) {
-      doc = await getDoc(`/${id}/`);
-    }
+      doc = await getDoc(path);
+      if (doc) break;
+    } catch (e) {}
   }
+
+  if (!doc) throw new Error("Could not load novel details for " + id);
 
   cachedDoc = doc;
   cachedId = id;
@@ -106,21 +118,55 @@ const plugin = {
 
   async popular(offset) {
     const page = Math.floor(offset / 20) + 1;
-    const path = page === 1 ? "/novels/" : `/novels/page/${page}/`;
+    // الاعتماد على مسار الصفحة الرئيسية لأنه متاح دائماً دون مشاكل 404
+    const path = page === 1 ? "/" : `/page/${page}/`;
+    
     let doc;
     try {
       doc = await getDoc(path);
     } catch (e) {
-      doc = await getDoc(page === 1 ? "/series/" : `/series/page/${page}/`);
+      return [];
     }
-    return doc.querySelectorAll(".listupd .bsx, .page-item-detail, article, .bsx").map(cardToSummary).filter(Boolean);
+
+    const items = doc.querySelectorAll("article, .post, .listupd .bsx, .page-item-detail, .entry");
+    const seen = new Set();
+    const results = [];
+
+    for (let i = 0; i < items.length; i++) {
+      const card = cardToSummary(items[i]);
+      if (card && !seen.has(card.id)) {
+        seen.add(card.id);
+        results.push(card);
+      }
+    }
+
+    return results;
   },
 
   async search(query, offset) {
     const page = Math.floor(offset / 20) + 1;
     const path = page === 1 ? `/?s=${encodeURIComponent(query)}` : `/page/${page}/?s=${encodeURIComponent(query)}`;
-    const doc = await getDoc(path);
-    return doc.querySelectorAll(".listupd .bsx, .page-item-detail, .search-item, article").map(cardToSummary).filter(Boolean);
+    
+    let doc;
+    try {
+      doc = await getDoc(path);
+    } catch (e) {
+      return [];
+    }
+
+    const items = doc.querySelectorAll("article, .post, .listupd .bsx, .search-item");
+    const seen = new Set();
+    const results = [];
+
+    for (let i = 0; i < items.length; i++) {
+      const card = cardToSummary(items[i]);
+      if (card && !seen.has(card.id)) {
+        seen.add(card.id);
+        results.push(card);
+      }
+    }
+
+    return results;
   },
 
   async detail(id) {
@@ -130,7 +176,7 @@ const plugin = {
       title = decodeURIComponent(title);
     } catch (e) {}
 
-    const img = doc.querySelector(".thumb img, .series-thumb img, .summary_image img");
+    const img = doc.querySelector(".thumb img, .series-thumb img, .summary_image img, img.wp-post-image");
     const desc = doc.querySelector(".entry-content, .series-synops, .summary__content, .description-summary")?.text()?.trim();
     const author = doc.querySelector(".author-content, .author, .spe span")?.text()?.replace(/المؤلف\s*:/i, "")?.trim();
 
@@ -145,7 +191,7 @@ const plugin = {
 
   async chapters(id) {
     const doc = await getNovelDoc(id);
-    const links = doc.querySelectorAll(".eplister ul li a, .wp-manga-chapter a, ul.chapter-list li a, .cl_list li a");
+    const links = doc.querySelectorAll(".eplister ul li a, .wp-manga-chapter a, ul.chapter-list li a, .cl_list li a, .chapters a");
     const total = links.length;
     if (total === 0) return [];
 
@@ -165,7 +211,6 @@ const plugin = {
         chapterTitle = a.text().trim();
       }
 
-      // ترتيب تصاعدي لقراءة الفصول من الأول إلى الأخير
       const position = total - 1 - i;
       list[position] = {
         id: href.replace(/^https?:\/\/[^\/]+/, ""),
@@ -180,8 +225,8 @@ const plugin = {
   },
 
   async content(chapterId) {
-    const doc = await getDoc(chapterId);
-    const container = doc.querySelector(".epcontent, .reading-content, #readerarea, .entry-content, .text-left");
+    const doc = await getDoc(chapterId.startsWith("/") ? chapterId : "/" + chapterId);
+    const container = doc.querySelector(".epcontent, .reading-content, #readerarea, .entry-content, .text-left, .post-content");
     if (!container) return "";
 
     const paragraphs = container.querySelectorAll("p");
