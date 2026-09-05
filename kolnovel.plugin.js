@@ -9,7 +9,8 @@ async function getDoc(path) {
     responseType: "text",
     headers: {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-      "Referer": BASE + "/"
+      "Referer": BASE + "/",
+      "Accept-Language": "ar,en;q=0.9"
     }
   });
   if (!res.ok) throw new Error("http " + res.status + " for " + path);
@@ -32,19 +33,18 @@ function cleanTitle(value) {
 }
 
 function cardToSummary(el) {
-  const link = el.querySelector("a.tip, .series-title a, .bsx a, a");
+  const link = el.querySelector(".bsx a, a.tip, h2 a, a");
   const img = el.querySelector("img");
   if (!link) return null;
 
-  const rawTitle = (link.attr("title") || el.querySelector(".title, .tt")?.text() || link.text() || "").trim();
+  const rawTitle = (link.attr("title") || el.querySelector(".tt, .title")?.text() || link.text() || "").trim();
   const href = link.attr("href") || "";
   
-  // استخراج المعرف النظيف (slug) للرواية من مسار الرابط
+  // استخراج الـ slug
   const match = href.match(/\/series\/([^\/]+)\/?/) || href.match(/\/manga\/([^\/]+)\/?/) || href.match(/\/([^\/]+)\/?$/);
   if (!match) return null;
 
   const id = match[1];
-
   let cover = img?.attr("data-src") || img?.attr("data-lazy-src") || img?.attr("src");
 
   return {
@@ -61,31 +61,29 @@ const plugin = {
 
   async popular(offset, tagId) {
     const page = Math.floor(offset / 20) + 1;
-    let path = `/series/?page=${page}&order=popular`;
-    if (tagId === "status:completed") path += "&status=completed";
-    if (tagId === "status:ongoing") path += "&status=ongoing";
+    let path = page === 1 ? `/series/?order=popular` : `/series/page/${page}/?order=popular`;
 
     const doc = await getDoc(path);
-    return doc.querySelectorAll(".listupd .bsx, .listupd .main-item, article.bs").map(cardToSummary).filter(Boolean);
+    return doc.querySelectorAll(".listupd article, .listupd .bsx, .bs").map(cardToSummary).filter(Boolean);
   },
 
   async search(query, offset, tagId) {
     const page = Math.floor(offset / 20) + 1;
-    const path = `/?s=${encodeURIComponent(query)}&post_type=wp-manga`;
+    const path = page === 1 ? `/?s=${encodeURIComponent(query)}` : `/page/${page}/?s=${encodeURIComponent(query)}`;
     const doc = await getDoc(path);
-    return doc.querySelectorAll(".listupd .bsx, .c-tabs-item__content, article.bs, .search-item").map(cardToSummary).filter(Boolean);
+    return doc.querySelectorAll(".listupd article, .listupd .bsx, .c-tabs-item__content, .bs").map(cardToSummary).filter(Boolean);
   },
 
   async detail(id) {
     const doc = await getDoc(`/series/${id}/`);
-    const root = doc.querySelector(".series-profile, .post-body, .main-info");
+    const root = doc.querySelector(".series-profile, .post-body, .main-info, article");
     if (!root) return null;
 
     const title = root.querySelector("h1.entry-title, h1")?.text() || id;
     const img = root.querySelector(".thumb img, .series-thumb img");
     const desc = root.querySelector(".entry-content, .series-synops, .summary")?.text()?.trim();
-    const author = root.querySelector(".author, .spe span:contains('المؤلف')")?.text()?.replace(/المؤلف\s*:/i, "")?.trim();
-    const status = root.querySelector(".status, .spe span:contains('الحالة')")?.text()?.replace(/الحالة\s*:/i, "")?.trim();
+    const author = root.querySelector(".author, .spe span")?.text()?.replace(/المؤلف\s*:/i, "")?.trim();
+    const status = root.querySelector(".status")?.text()?.trim();
 
     return {
       id,
@@ -100,8 +98,6 @@ const plugin = {
 
   async chapters(id) {
     const doc = await getDoc(`/series/${id}/`);
-    
-    // استخراج روابط الفصول من القائمة
     const chapterLinks = doc.querySelectorAll(".eplister ul li a, .cl_list ul li a, ul.chapter-list li a");
     
     const items = [];
@@ -118,7 +114,6 @@ const plugin = {
       });
     });
 
-    // عكس الترتيب إذا كانت الفصول معروضة من الأحدث للأقدم لترتيب القراءة
     items.reverse();
 
     return items.map((item, position) => {
@@ -134,14 +129,11 @@ const plugin = {
 
   async content(chapterId) {
     const doc = await getDoc("/" + chapterId);
-
-    // استخراج فقرات الرواية من الحاوية المخصصة للقراءة مع استبعاد الإعلانات
     const paragraphs = doc.querySelectorAll(".entry-content p, .epcontent p, .reading-content p");
     
     const textBlocks = [];
     paragraphs.forEach(p => {
       const text = p.text().trim();
-      // استبعاد الفقرات الفارغة أو رسائل حقوق الترجمة المتكررة
       if (text && !text.includes("kolnovel") && !text.includes("انضموا إلى سيرفرنا")) {
         textBlocks.push(text);
       }
@@ -157,3 +149,8 @@ const plugin = {
     ];
   }
 };
+
+// تسجيل الإضافة في محرك Harbor إذا كان النظام يتطلب ذلك
+if (typeof harbor !== "undefined" && harbor.register) {
+  harbor.register(plugin);
+}
