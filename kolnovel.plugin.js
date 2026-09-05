@@ -1,4 +1,6 @@
 // Harbor eBook source plugin for KolNovel
+// Website: https://kolnovel.com
+
 const BASE = "https://kolnovel.com";
 
 async function getDoc(path) {
@@ -24,6 +26,7 @@ function abs(url) {
 
 function cleanTitle(value) {
   return (value || "")
+    .replace(/[^\p{L}\p{N}'’]+/gu, " ")
     .replace(/\s+(?:kol|كول|رواية)$/iu, "")
     .replace(/\s+/g, " ")
     .trim();
@@ -31,21 +34,21 @@ function cleanTitle(value) {
 
 function cardToSummary(el) {
   const link = el.querySelector(".bsx a, a.tip, .series-title a, a");
+  const img = el.querySelector("img");
   if (!link) return null;
 
   const rawTitle = (link.attr("title") || el.querySelector(".tt, .title")?.text() || link.text() || "").trim();
   const href = link.attr("href") || "";
   
-  const match = href.match(/\/(?:series|novel)\/([^\/]+)\/?/) || href.match(/\/([^\/]+)\/?$/);
+  const match = href.match(/\/series\/([^\/]+)\/?/) || href.match(/\/([^\/]+)\/?$/);
   if (!match) return null;
-
-  const img = el.querySelector("img");
-  const cover = img?.attr("data-src") || img?.attr("data-lazy-src") || img?.attr("src");
 
   return {
     id: match[1],
     title: cleanTitle(rawTitle),
-    cover: abs(cover)
+    cover: abs(img?.attr("data-src") || img?.attr("data-lazy-src") || img?.attr("src")),
+    status: el.querySelector(".status, .epx")?.text()?.trim() || undefined,
+    genres: el.querySelectorAll(".genres a").map(n => n.text().trim()).filter(Boolean)
   };
 }
 
@@ -53,22 +56,22 @@ const plugin = {
   id: "kolnovel-source",
   name: "KolNovel",
 
-  async popular(offset) {
+  async popular(offset, tagId) {
     const page = Math.floor(offset / 20) + 1;
-    const path = page === 1 ? `/series/` : `/series/page/${page}/`;
+    const path = page === 1 ? "/series/" : "/series/?page=" + page;
     const doc = await getDoc(path);
-    return doc.querySelectorAll(".listupd article, .listupd .bsx, .bs").map(cardToSummary).filter(Boolean);
+    return doc.querySelectorAll(".listupd article.bs, .listupd .bsx, .bs").map(cardToSummary).filter(Boolean);
   },
 
-  async search(query, offset) {
+  async search(query, offset, tagId) {
     const page = Math.floor(offset / 20) + 1;
-    const path = page === 1 ? `/?s=${encodeURIComponent(query)}` : `/page/${page}/?s=${encodeURIComponent(query)}`;
+    const path = page === 1 ? "/?s=" + encodeURIComponent(query) : "/page/" + page + "/?s=" + encodeURIComponent(query);
     const doc = await getDoc(path);
-    return doc.querySelectorAll(".listupd article, .listupd .bsx, .search-item").map(cardToSummary).filter(Boolean);
+    return doc.querySelectorAll(".listupd article.bs, .listupd .bsx, .search-item").map(cardToSummary).filter(Boolean);
   },
 
   async detail(id) {
-    const doc = await getDoc(`/series/${id}/`);
+    const doc = await getDoc("/series/" + id + "/");
     const root = doc.querySelector(".series-profile, .post-body, .main-info, article");
     if (!root) return null;
 
@@ -76,22 +79,25 @@ const plugin = {
     const img = root.querySelector(".thumb img, .series-thumb img");
     const desc = root.querySelector(".entry-content, .series-synops, .summary")?.text()?.trim();
     const author = root.querySelector(".author, .spe span")?.text()?.replace(/المؤلف\s*:/i, "")?.trim();
+    const status = root.querySelector(".status")?.text()?.trim();
 
     return {
       id,
       title: cleanTitle(title),
       cover: abs(img?.attr("data-src") || img?.attr("src")),
       description: desc || "",
-      author: author || undefined
+      author: author || undefined,
+      status: status || undefined,
+      genres: root.querySelectorAll(".genres a, .series-genres a").map(node => node.text().trim()).filter(Boolean)
     };
   },
 
   async chapters(id) {
-    const doc = await getDoc(`/series/${id}/`);
+    const doc = await getDoc("/series/" + id + "/");
     const nodes = doc.querySelectorAll(".eplister ul li a, ul.chapter-list li a");
     const total = nodes.length;
 
-    const chaptersList = new Array(total);
+    const list = new Array(total);
     for (let i = 0; i < total; i++) {
       const a = nodes[i];
       const href = a.attr("href") || "";
@@ -99,7 +105,7 @@ const plugin = {
       const title = numNode ? numNode.text().trim() : a.text().trim();
 
       const position = total - 1 - i;
-      chaptersList[position] = {
+      list[position] = {
         id: href.replace(BASE, "").replace(/^\//, ""),
         position: position,
         title: title,
@@ -108,27 +114,12 @@ const plugin = {
       };
     }
 
-    return chaptersList.filter(Boolean);
+    return list.filter(Boolean);
   },
 
   async content(chapterId) {
     const doc = await getDoc("/" + chapterId);
-    const paragraphs = doc.querySelectorAll(".entry-content p, .epcontent p");
-
-    const blocks = [];
-    for (let i = 0; i < paragraphs.length; i++) {
-      const txt = paragraphs[i].text().trim();
-      if (txt && !txt.includes("kolnovel") && !txt.includes("انضموا إلى")) {
-        blocks.push(txt);
-      }
-    }
-    return blocks.join("\n\n");
+    const blocks = doc.querySelectorAll(".entry-content p, .epcontent p");
+    return blocks.map(n => n.text().trim()).filter(t => t && !t.includes("kolnovel")).join("\n\n");
   }
 };
-
-// دعم المحركين: سواء بالتسجيل المباشر أو بإرجاع الكائن
-if (typeof harbor !== "undefined" && harbor.register) {
-  harbor.register(plugin);
-}
-
-return plugin;

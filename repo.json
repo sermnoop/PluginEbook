@@ -1,14 +1,14 @@
 {
   "type": "ebook",
-  "name": "My eBook Repo",
+  "name": "My Novel Sources",
   "plugins": [
     {
       "id": "kolnovel-source",
       "name": "KolNovel",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "lang": "ar",
       "nsfw": false,
-      "icon": "https://kolnovel.com/favicon.ico",
+      "icon": "https://kolnovel.com/wp-content/uploads/2026/07/بدون-اسم28_20260716020734.png",
       "entry": "kolnovel.plugin.js"
     }
   ]
